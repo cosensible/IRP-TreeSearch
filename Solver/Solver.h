@@ -232,7 +232,7 @@ public:
     struct { // auxiliary data for solver.
         Arr2D<Price> routingCost; // routingCost[i, j] is the routing cost from node i to j.
         Price initHoldingCost; // the holding cost for initial quantity before horizon begin.
-		int m = 2, iterTime = 3;
+		int m = 2, iterTime = 2;
     } aux;
 
     Environment env;

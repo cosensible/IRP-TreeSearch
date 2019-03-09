@@ -9,6 +9,7 @@
 #include <mutex>
 #include <stack>
 #include <cmath>
+#include <queue>
 
 #include "CsvReader.h"
 #include "MpSolver.h"
@@ -440,69 +441,81 @@ namespace szx {
 		//	cout << endl;
 		//}
 
-		pair<ID, vector<ID>> leaf{ -1,{-1} };
-		Price bestCost = sln.totalCost, bestLeafCost = Problem::MaxCost;
+		// ID 为父节点的编号，vector<ID>为树搜索路径，最后一个元素为该叶节点的迭代周期
+		queue<pair<ID, vector<ID>>> leaves;
+		leaves.push({ -1,{-1,0} });
+		Price bestCost = sln.totalCost;
 		vector<ID> bestChange;
-		int visitNum = periodNum * nodeNum;
+		int visitNum = periodNum * nodeNum, leafNum = 3;
 		for (int step = 0; step < iterTime; ++step) {
-			if (leaf.first == (visitNum - 1)) { break; }
-			vector<ID> lastChange(leaf.second);
-			int level = 0, vid = nodeNum;// 略过第一个周期
-			stack<int> trace;
-			trace.push(leaf.first);
+			int curLeafNum = 0; // 该周期当前加入的叶子数
+			while (!leaves.empty()) {
+				pair<ID, vector<ID>> leaf = leaves.front();
+				if (leaf.second.back() > step) { break; }
+				leaves.pop(); leaf.second.pop_back();
+				leaf.second.pop_back(); // 去除重复父结点
+				if (leaf.first == (visitNum - 1)) { break; }
+				vector<ID> lastChange(std::move(leaf.second));	// 备份到达该节点的访问路径
+				int level = 0, vid = leaf.first > 0 ? (leaf.first + 1) : nodeNum; // 下次迭代从父结点的子节点开始（初始跳过第一个周期）
+				stack<int> trace;
+				int root = leaf.first;
+				trace.push(leaf.first);
 
-			while (!trace.empty()) {
-				if (0 == (vid / nodeNum)) { ++vid; continue; }	//仓库不反转
-
-				int curRoot = trace.top();
-				if (curRoot == (visitNum - 1)) {	// 如果访问到末尾，弹出当前节点和其父节点
-					trace.pop(); --level;
-					visits[curRoot / nodeNum][curRoot % nodeNum] = 1 - visits[curRoot / nodeNum][curRoot % nodeNum];
-					curRoot = trace.top();
-					trace.pop();--level;
-					if (curRoot >= 0) {
+				while (!trace.empty()) {	// 扩展该节点
+					if (0 == (vid % nodeNum)) { ++vid; continue; }	//仓库不反转
+					int curRoot = trace.top();
+					if (curRoot == (visitNum - 1)) {	// 如果访问到末尾，弹出当前节点和其父节点
+						trace.pop(); --level;
 						visits[curRoot / nodeNum][curRoot % nodeNum] = 1 - visits[curRoot / nodeNum][curRoot % nodeNum];
+						curRoot = trace.top();
+						trace.pop(); --level;
+						if (curRoot > root) {
+							visits[curRoot / nodeNum][curRoot % nodeNum] = 1 - visits[curRoot / nodeNum][curRoot % nodeNum];
+							vid = curRoot + 1;
+						}
+						else { break; }
+					}
+					else if (level == depth) {	// 达到深度，弹出当前节点
+						visits[curRoot / nodeNum][curRoot % nodeNum] = 1 - visits[curRoot / nodeNum][curRoot % nodeNum];
+						trace.pop(); --level;
 						vid = curRoot + 1;
 					}
-					else { break; }
-				}
-				else if (level == depth) {	// 达到深度，弹出当前节点
-					visits[curRoot / nodeNum][curRoot % nodeNum] = 1 - visits[curRoot / nodeNum][curRoot % nodeNum];
-					trace.pop();--level;
-					vid = curRoot + 1;
-				}
-				if (vid > curRoot) {		// 偏序搜索
-					trace.push(vid);
-					visits[vid / nodeNum][vid % nodeNum] = 1 - visits[vid / nodeNum][vid % nodeNum];
-					if (visits[vid / nodeNum][vid % nodeNum]) { visits[vid / nodeNum][0] = 1; } // 客户变为1，仓库置1
-					Price invCost = callModel(visits); // 求改变访问后的库存
-					if (invCost >= 0) {		//库存模型有解
-						Price curTourCost = callLKH(sln, visits, vid / nodeNum);	// 求路由
-						Price totalCost = sln.allTourCost + curTourCost - toursCost[vid / nodeNum] + invCost;
-						cout << "改变后的值：" << totalCost << "当前最优值：" << bestCost << endl;
-						if (totalCost < bestCost) {	// 记录全局最优
-							bestCost = totalCost;
-							bestChange = lastChange;
-							bestChange.pop_back();
-							for (const auto &vid : trace._Get_container()) {
-								bestChange.push_back(vid);
-							}
-						}	// 记录拥有最优值的叶子
-						if ((level + 1) == depth && totalCost < bestLeafCost) {
-							leaf.first = vid;
-							leaf.second = lastChange;
-							leaf.second.pop_back();
-							for (const auto &v : trace._Get_container()) {
-								leaf.second.push_back(v);
+					if (vid > curRoot) {		// 偏序搜索
+						trace.push(vid);
+						visits[vid / nodeNum][vid % nodeNum] = 1 - visits[vid / nodeNum][vid % nodeNum];
+						if (visits[vid / nodeNum][vid % nodeNum]) { visits[vid / nodeNum][0] = 1; } // 客户变为1，仓库置1
+						Price invCost = callModel(visits);		// 求改变访问后的库存
+						if (invCost >= 0) {		//库存模型有解
+							Price curTourCost = callLKH(sln, visits, vid / nodeNum);	// 求路由
+							Price totalCost = sln.allTourCost + curTourCost - toursCost[vid / nodeNum] + invCost;
+							cout << "cost after change : " << totalCost << ", best cost now : " << bestCost << endl;
+							if (totalCost < bestCost) {	// 记录全局最优
+								bestCost = totalCost;
+								bestChange = lastChange;
+								for (const auto &vid : trace._Get_container()) {
+									bestChange.push_back(vid);
+								}
+							}	// 记录可扩展的叶子，不一定要topk
+							if ((level + 1) == depth && vid < (visitNum - 1)) {
+								leaf.first = vid;
+								leaf.second = lastChange;
+								for (const auto &v : trace._Get_container()) {
+									leaf.second.push_back(v);
+								}
+								leaf.second.push_back(step + 1);// 为该叶子标注扩展周期
+								if (curLeafNum < leafNum) {
+									++curLeafNum;
+									leaves.push(std::move(leaf));
+								}
 							}
 						}
+						++level; ++vid;
 					}
-					++level; ++vid;
 				}
 			}
 		}
 		sln.totalCost = bestCost;
-		cout << "迭代完成最优值：" << bestCost << endl;
+		cout << "best result after iteration : " << bestCost << endl;
 	}
 
 	bool Solver::optimize(Solution &sln, ID workerId) {
