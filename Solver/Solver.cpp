@@ -302,7 +302,7 @@ namespace szx {
 		}
 	}
 
-	Price Solver::callModel(Solution &sln,const Arr2D<int> &visits,bool isBest) {
+	Price Solver::callModel(Solution &sln, Arr2D<int> &visits, ID vid, bool isBest) {
 		ID nodeNum = input.nodes_size();
 		ID vehicleNum = input.vehicles_size();
 		ID periodNum = input.periodnum();
@@ -360,6 +360,7 @@ namespace szx {
 				mp.addConstraint(quantity == 0);
 			}
 		}
+
 		// add objective.
 		Expr holdingCost = aux.initHoldingCost;
 		for (ID n = 0; n < nodeNum; ++n) {
@@ -369,6 +370,7 @@ namespace szx {
 			}
 		}
 		mp.addObjective(holdingCost, MpSolver::OptimaOrientation::Minimize, 0, 0, 0, env.timeoutInSecond());
+
 		if (mp.optimize()) {
 			if (!isBest) { return mp.getObjectiveValue(); }
 			for (ID p = 0; p < input.periodnum(); ++p) {
@@ -376,7 +378,7 @@ namespace szx {
 				for (ID v = 0; v < vehicleNum; ++v) {
 					auto &route(*periodRoute.mutable_vehicleroutes(v));
 					route.clear_deliveries();
-					for (auto n = aux.tours[p].begin();n != aux.tours[p].end(); ++n) {
+					for (auto n = aux.tours[p].begin(); n != aux.tours[p].end(); ++n) {
 						auto &d(*route.add_deliveries());
 						d.set_node(*n);
 						d.set_quantity(lround(mp.getValue(delivery[p][v][*n])));
@@ -385,7 +387,24 @@ namespace szx {
 			}
 			return mp.getObjectiveValue();
 		}
-		return -1;
+		// 不可行，还原再加约束求解
+		else if (vid >= 0) {
+			ID pid = vid / nodeNum, nid = vid % nodeNum;
+			visits[pid][nid] = 1 - visits[pid][nid];	// 还原访问
+			Expr inventory = input.nodes(nid).initquantity();
+			Quantity demand = input.nodes(nid).demands(pid);
+			for (ID p = 0; p < pid; ++p) {
+				for (ID v = 0; v < input.vehicles_size(); ++v) {
+					inventory += delivery[p][v][nid];
+				}
+			}
+			mp.addConstraint(inventory >= (pid + 1)*demand);
+			if (mp.optimize()) {
+				visits[pid][nid] = 1 - visits[pid][nid];	// 翻转节点，继续搜索
+				return mp.getObjectiveValue();
+			}
+		}
+		return -1;	// 还是不可行，剪枝
 	}
 
 	Price Solver::callLKH(const Arr2D<ID> &visits,bool isBest) {
@@ -509,12 +528,12 @@ namespace szx {
 				}
 				curRoot = trace.top();
 				if (vid > curRoot) {		// 偏序搜索
-					trace.push(vid);
 					ID pid = vid / nodeNum, nid = vid % nodeNum;
 					visits[pid][nid] = 1 - visits[pid][nid];
-					if (visits[pid][nid]) { visits[pid][0] = 1; } // 客户变为1，仓库置1
-					Price invCost = callModel(sln, visits);		// 求改变访问后的库存
+					if (visits[pid][nid]) { visits[pid][0] = 1; }	// 客户变为1，仓库置1
+					Price invCost = callModel(sln, visits, vid);	// 求改变访问后的库存
 					if (invCost >= 0) {		//库存模型有解
+						trace.push(vid);
 						Price curTourCost = callLKH(visits);	// 求路由
 						Price totalCost = curTourCost + invCost;
 						std::cout << "cost after change : " << totalCost << ", best cost now : " << bestCost << endl;
@@ -551,8 +570,12 @@ namespace szx {
 								}
 							}
 						}
+						++level; ++vid;	// 不剪枝，访问下一层节点
 					}
-					++level; ++vid;
+					else {
+						++vid;	// 剪枝，直接访问同层下一个兄弟节点
+						cout << "------ Cut Cut Cut --------" << endl;
+					}
 				}
 			}
 			if (bestCost < aux.cost) { break; }
@@ -577,7 +600,7 @@ namespace szx {
 		Solution curSln;
 		curSln.init(periodNum, input.vehicles_size());
 		curSln.totalCost = bestCost;
-		callModel(curSln, visits, true);
+		callModel(curSln, visits, -1, true);
 		std::swap(curSln, sln);
 
 		std::cout << "best result after iteration : " << bestCost << endl;

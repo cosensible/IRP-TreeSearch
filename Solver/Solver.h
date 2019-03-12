@@ -219,7 +219,7 @@ namespace szx {
 		void outVisits(const Arr2D<int> &visits, const std::string &msg);
 		void iteratedModel(Solution &sln);
 		void treeSearch(Solution &sln, int depth);
-		Price callModel(Solution &sln, const Arr2D<int> &visits, bool isBest = false);
+		Price callModel(Solution &sln, Arr2D<int> &visits, ID vid, bool isBest = false);
 		Price callLKH(const Arr2D<int> &visits, bool isBest = false);
 
 #pragma endregion Method
@@ -234,7 +234,7 @@ namespace szx {
 			Price initHoldingCost; // the holding cost for initial quantity before horizon begin.
 
 			int m = 2;
-			Price cost = 4513.5;
+			Price cost = 4047.5;
 			List<List<ID>> tours;
 		} aux;
 
