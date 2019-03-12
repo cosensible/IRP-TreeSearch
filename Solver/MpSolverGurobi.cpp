@@ -55,7 +55,7 @@ bool MpSolverGurobi::reportStatus(ResultStatus status) {
         Log(LogSwitch::Szx::MpSolver) << "Unsolved." << endl; break;
     case InsolubleCutoff:
     case InsolubleModel:
-        /*Log(LogSwitch::Szx::MpSolver) << "Infeasible." << endl;*/ break;
+        Log(LogSwitch::Szx::MpSolver) << "Infeasible." << endl; break;
     case ExceedLimit:
         Log(LogSwitch::Szx::MpSolver) << "Exceed Limit." << endl; break;
     case OutOfMemory:

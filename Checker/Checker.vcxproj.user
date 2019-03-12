@@ -15,5 +15,6 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LocalDebuggerWorkingDirectory>$(SolutionDir)Deploy</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommandArguments>..\Deploy\Instance\abs.v1h3c2n50.1.json ..\Deploy\Solution\abs.v1h3c2n50.1.json</LocalDebuggerCommandArguments>
   </PropertyGroup>
 </Project>

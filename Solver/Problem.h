@@ -47,7 +47,7 @@ public:
             return true;
         }
 
-		Price totalCost = 0;
+        Price totalCost = 0;
     };
     #pragma endregion Type
 
