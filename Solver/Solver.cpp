@@ -235,7 +235,7 @@ namespace szx {
 			<< cfg.toBriefStr() << ","
 			<< generation << "," << iteration;
 
-		// record solution vector.
+		// record solution List.
 		// EXTEND[szx][2]: save solution in log.
 		log << endl;
 
@@ -301,7 +301,7 @@ namespace szx {
 			aux.initHoldingCost += i->holdingcost() * i->initquantity();
 		}
 	}
-
+	// vid 为当前改变的 <p, n> 访问状态，isBest 表示在记录最优解
 	Price Solver::callModel(Solution &sln, Arr2D<int> &visits, ID vid, bool isBest) {
 		ID nodeNum = input.nodes_size();
 		ID vehicleNum = input.vehicles_size();
@@ -373,6 +373,7 @@ namespace szx {
 
 		if (mp.optimize()) {
 			if (!isBest) { return mp.getObjectiveValue(); }
+			// 不是记录最优解，直接返回，否则还要记录最优解
 			for (ID p = 0; p < input.periodnum(); ++p) {
 				auto &periodRoute(*sln.mutable_periodroutes(p));
 				for (ID v = 0; v < vehicleNum; ++v) {
@@ -391,6 +392,7 @@ namespace szx {
 		else if (vid >= 0) {
 			ID pid = vid / nodeNum, nid = vid % nodeNum;
 			visits[pid][nid] = 1 - visits[pid][nid];	// 还原访问
+			// 前面配送和初始库存总量要满足前 p 个周期的消耗
 			Expr inventory = input.nodes(nid).initquantity();
 			Quantity demand = input.nodes(nid).demands(pid);
 			for (ID p = 0; p < pid; ++p) {
@@ -407,7 +409,7 @@ namespace szx {
 		return -1;	// 还是不可行，剪枝
 	}
 
-	Price Solver::callLKH(const Arr2D<ID> &visits,bool isBest) {
+	Price Solver::callLKH(const Arr2D<ID> &visits, bool isBest) {
 		ID nodeNum = input.nodes_size();
 		const auto &nodes(*input.mutable_nodes());
 
@@ -463,11 +465,22 @@ namespace szx {
 		}
 	}
 
+	void Solver::loadVisits(Arr2D<int> &visits, const List<ID> &change, ID root) {
+		ID nodeNum = input.nodes_size();
+		for (const auto &v : change) {	// 加载该节点处的 visits 状态
+			if (v < 0) { continue; }
+			visits[v / nodeNum][v % nodeNum] = 1 - visits[v / nodeNum][v % nodeNum];
+		}
+		if (root >= 0) {
+			visits[root / nodeNum][root % nodeNum] = 1 - visits[root / nodeNum][root % nodeNum];
+		}
+	}
+
 	void Solver::treeSearch(Solution &sln, int depth) {
 		ID nodeNum = input.nodes_size();
 		ID periodNum = input.periodnum();
 
-		Arr2D<ID> visits(periodNum, nodeNum, 0);
+		Arr2D<ID> visits(periodNum, nodeNum, 0);	// 记录初始解 visits
 		for (ID p = 0; p < periodNum; ++p) {
 			auto &periodRoute(*sln.mutable_periodroutes(p));
 			for (ID v = 0; v < input.vehicles_size(); ++v) {
@@ -480,28 +493,21 @@ namespace szx {
 		}
 		outVisits(visits, "initial visits : ");
 
-		// Price：成本， vector<ID>：为树搜索路径，最后一个元素为下一轮迭代起始节点
+		// Price：成本， List<ID>：为树搜索路径，最后一个元素为下一轮迭代起始节点
 		Price bestCost = sln.totalCost;
-		vector<ID> bestChange;	// 记录最优解的变化路径
+		List<ID> bestChange;	// 记录最优解的变化路径
 		int visitNum = periodNum * nodeNum, leafNum = 5;
-		vector<pair<Price, vector<ID>>> topkLeaves{ { 0,{ -1 } } };
+		List<pair<Price, List<ID>>> topkLeaves{ { 0,{ -1 } } };
 		while (!topkLeaves.empty()) {
-			pair<Price, vector<ID>> leaf(std::move(topkLeaves.back()));
+			pair<Price, List<ID>> leaf(std::move(topkLeaves.back()));
 			topkLeaves.pop_back();
 			int root = leaf.second.back();	// 下一轮迭代起点
 			if (root == (visitNum - 1)) { continue; }
 
 			leaf.second.pop_back();			// 去除重复父结点
-			vector<ID> lastChange(std::move(leaf.second));	// 备份到达该节点的访问路径
-
-			for (const auto &v : lastChange) {	// 加载该节点处的 visits 状态
-				if (v < 0) { continue; }
-				visits[v / nodeNum][v % nodeNum] = 1 - visits[v / nodeNum][v % nodeNum];
-			}
-			if (root >= 0) {
-				visits[root / nodeNum][root % nodeNum] = 1 - visits[root / nodeNum][root % nodeNum];
-			}
-
+			List<ID> lastChange(std::move(leaf.second));	// 备份到达该节点的访问路径
+			// 加载该节点处的 visits 状态
+			loadVisits(visits, lastChange, root);
 			int level = 0, vid = (root >= 0) ? (root + 1) : nodeNum; // 下次迭代从父结点的子节点开始（初始跳过第一个周期）
 			stack<int> trace;
 			trace.push(root);
@@ -532,40 +538,41 @@ namespace szx {
 					visits[pid][nid] = 1 - visits[pid][nid];
 					if (visits[pid][nid]) { visits[pid][0] = 1; }	// 客户变为1，仓库置1
 					Price invCost = callModel(sln, visits, vid);	// 求改变访问后的库存
-					if (invCost >= 0) {		//库存模型有解
+					if (invCost >= 0) {	// 该节点库存可行
 						trace.push(vid);
 						Price curTourCost = callLKH(visits);	// 求路由
 						Price totalCost = curTourCost + invCost;
 						std::cout << "cost after change : " << totalCost << ", best cost now : " << bestCost << endl;
-						if (totalCost < bestCost) {	// 记录全局最优
+						if (totalCost < bestCost) {	// 记录全局最优值
 							bestCost = totalCost;
 							bestChange = lastChange;
-							for (const auto &vid : trace._Get_container()) {
+							for (const auto &vid : trace._Get_container()) {	// 记录最优状态改变路径
 								bestChange.push_back(vid);
-								cout << vid << " ";
 							}
-							cout << endl;
-							cout << "current best change : " << endl;
-							for (const auto &c : bestChange) {
-								cout << c << "->";
-							}
-							cout << endl;
 
-							if (bestCost < aux.cost) { break; }	// 结束前要还原 visits
+							//cout << "current best change : " << endl;
+							//for (const auto &c : bestChange) {
+							//	cout << c << "->";
+							//}
+							//cout << endl;
+
+							// 找到论文最优解，直接退出
+							if (bestCost < aux.cost) { break; }
 
 						}	// 记录可扩展的叶子，不一定要topk
 						if ((level + 1) == depth && vid < (visitNum - 1)) {
 							leaf.first = totalCost;
 							leaf.second = lastChange;
-							for (const auto &v : trace._Get_container()) {
+							for (const auto &v : trace._Get_container()) {	// 获取当前状态改变路径
 								leaf.second.push_back(v);
 							}
-							if (topkLeaves.size() < leafNum) {
+							if (topkLeaves.size() < leafNum) {	// 叶子集合没满，直接加入
 								topkLeaves.push_back(std::move(leaf));
 							}
 							else {
-								sort(topkLeaves.begin(), topkLeaves.end(), [](pair<Price, vector<ID>> l, pair<Price, vector<ID>> r) {return l.first > r.first; });
-								if (totalCost < topkLeaves.begin()->first) {
+								// 按目标函数值降序排列，方便从最后取出最好的解
+								sort(topkLeaves.begin(), topkLeaves.end(), [](pair<Price, List<ID>> l, pair<Price, List<ID>> r) {return l.first > r.first; });
+								if (totalCost < topkLeaves.begin()->first) {	// 第一个是最差的叶子，跟它比较来决定是否留下
 									topkLeaves[0] = std::move(leaf);
 								}
 							}
@@ -578,31 +585,20 @@ namespace szx {
 					}
 				}
 			}
+			// 找到论文最优解，直接退出
 			if (bestCost < aux.cost) { break; }
-			for (const auto &v : lastChange) {	// 拓展完该节点，还原 visits 状态
-				if (v < 0) { continue; }
-				visits[v / nodeNum][v % nodeNum] = 1 - visits[v / nodeNum][v % nodeNum];
-			}
-			if (root >= 0) {
-				visits[root / nodeNum][root % nodeNum] = 1 - visits[root / nodeNum][root % nodeNum];
-			}
-			outVisits(visits, "After iteration : ");
+			// 否则，还原 visits 状态，并继续下一轮迭代
+			loadVisits(visits, lastChange, root);
 		}
+		// 没找到论文最优解，但是迭代结束，将 visits 改为当前找到的最优解，方便以后记录该解
 		if (bestCost >= aux.cost) {
-			for (const auto &c : bestChange) {
-				if (c < 0) { continue; }
-				visits[c / nodeNum][c % nodeNum] = 1 - visits[c / nodeNum][c % nodeNum];
-			}
+			loadVisits(visits, bestChange, -1);
 		}
-
+		// 记录找到的最优解
 		outVisits(visits, "best change : ");
-		callLKH(visits, true);
-		Solution curSln;
-		curSln.init(periodNum, input.vehicles_size());
-		curSln.totalCost = bestCost;
-		callModel(curSln, visits, -1, true);
-		std::swap(curSln, sln);
-
+		callLKH(visits, true);	// 调用 LKH 得到最优解的路由
+		sln.totalCost = bestCost;
+		callModel(sln, visits, -1, true);	// 调用模型得到最优解的库存，并更新最终解
 		std::cout << "best result after iteration : " << bestCost << endl;
 	}
 

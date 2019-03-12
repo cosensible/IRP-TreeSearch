@@ -219,6 +219,7 @@ namespace szx {
 		void outVisits(const Arr2D<int> &visits, const std::string &msg);
 		void iteratedModel(Solution &sln);
 		void treeSearch(Solution &sln, int depth);
+		void loadVisits(Arr2D<int> &visits, const List<ID> &change, ID root);
 		Price callModel(Solution &sln, Arr2D<int> &visits, ID vid, bool isBest = false);
 		Price callLKH(const Arr2D<int> &visits, bool isBest = false);
 
