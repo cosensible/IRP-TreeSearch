@@ -234,8 +234,8 @@ namespace szx {
 			Arr2D<Price> routingCost; // routingCost[i, j] is the routing cost from node i to j.
 			Price initHoldingCost; // the holding cost for initial quantity before horizon begin.
 
-			int m = 2;
-			Price cost = 4047.5;
+			int m = 1, leafNum = 1000;
+			Price cost = 4218.5;
 			List<List<ID>> tours;
 		} aux;
 

@@ -389,7 +389,7 @@ namespace szx {
 			return mp.getObjectiveValue();
 		}
 		// 不可行，还原再加约束求解
-		else if (vid >= 0) {
+		else if (vid < (periodNum*nodeNum)) {
 			ID pid = vid / nodeNum, nid = vid % nodeNum;
 			visits[pid][nid] = 1 - visits[pid][nid];	// 还原访问
 			// 前面配送和初始库存总量要满足前 p 个周期的消耗
@@ -466,12 +466,12 @@ namespace szx {
 	}
 
 	void Solver::loadVisits(Arr2D<int> &visits, const List<ID> &change, ID root) {
-		ID nodeNum = input.nodes_size();
+		ID nodeNum = input.nodes_size(), periodNum = input.periodnum();
 		for (const auto &v : change) {	// 加载该节点处的 visits 状态
-			if (v < 0) { continue; }
+			if (v == (nodeNum*periodNum)) { continue; }
 			visits[v / nodeNum][v % nodeNum] = 1 - visits[v / nodeNum][v % nodeNum];
 		}
-		if (root >= 0) {
+		if (root < (nodeNum*periodNum)) {
 			visits[root / nodeNum][root % nodeNum] = 1 - visits[root / nodeNum][root % nodeNum];
 		}
 	}
@@ -496,35 +496,34 @@ namespace szx {
 		// Price：成本， List<ID>：为树搜索路径，最后一个元素为下一轮迭代起始节点
 		Price bestCost = sln.totalCost;
 		List<ID> bestChange;	// 记录最优解的变化路径
-		int visitNum = periodNum * nodeNum, leafNum = 5;
-		List<pair<Price, List<ID>>> topkLeaves{ { 0,{ -1 } } };
+		int stVisit = nodeNum + 1, endVisit = periodNum * nodeNum;
+		List<pair<Price, List<ID>>> topkLeaves{ { 0,{ endVisit } } };
 		while (!topkLeaves.empty()) {
 			pair<Price, List<ID>> leaf(std::move(topkLeaves.back()));
 			topkLeaves.pop_back();
 			int root = leaf.second.back();	// 下一轮迭代起点
-			if (root == (visitNum - 1)) { continue; }
-
+			if (root == stVisit) { continue; }
 			leaf.second.pop_back();			// 去除重复父结点
 			List<ID> lastChange(std::move(leaf.second));	// 备份到达该节点的访问路径
 			// 加载该节点处的 visits 状态
 			loadVisits(visits, lastChange, root);
-			int level = 0, vid = (root >= 0) ? (root + 1) : nodeNum; // 下次迭代从父结点的子节点开始（初始跳过第一个周期）
+			int level = 0, vid = root - 1; // 下次迭代从父结点的子节点开始
 			stack<int> trace;
 			trace.push(root);
 
 			while (!trace.empty()) {	// 扩展该节点
-				if (0 == (vid % nodeNum)) { ++vid; continue; }	//仓库不反转
+				if (0 == (vid % nodeNum)) { --vid; continue; }	//仓库不反转
 				int curRoot = trace.top();
 				ID p = curRoot / nodeNum, n = curRoot % nodeNum;
-				if (curRoot == (visitNum - 1)) {	// 如果访问到末尾，弹出当前节点和其父节点
+				if (curRoot == stVisit) {	// 如果访问到末尾，弹出当前节点和其父节点
 					trace.pop(); --level;
 					visits[p][n] = 1 - visits[p][n];
 					curRoot = trace.top();
 					trace.pop(); --level;
-					if (curRoot > root) {
+					if (curRoot < root) {
 						visits[curRoot / nodeNum][curRoot % nodeNum] = 1 - visits[curRoot / nodeNum][curRoot % nodeNum];
-						vid = curRoot + 1;
-						if (0 == (vid % nodeNum)) { ++vid; continue; }	//仓库不反转
+						vid = curRoot - 1;
+						if (0 == (vid % nodeNum)) { --vid; continue; }	//仓库不反转
 					}
 					else { break; }
 				}
@@ -532,8 +531,10 @@ namespace szx {
 					visits[p][n] = 1 - visits[p][n];
 					trace.pop(); --level;
 				}
+
 				curRoot = trace.top();
-				if (vid > curRoot) {		// 偏序搜索
+				if (vid < curRoot) {		// 偏序搜索
+
 					ID pid = vid / nodeNum, nid = vid % nodeNum;
 					visits[pid][nid] = 1 - visits[pid][nid];
 					if (visits[pid][nid]) { visits[pid][0] = 1; }	// 客户变为1，仓库置1
@@ -550,23 +551,23 @@ namespace szx {
 								bestChange.push_back(vid);
 							}
 
-							//cout << "current best change : " << endl;
-							//for (const auto &c : bestChange) {
-							//	cout << c << "->";
-							//}
-							//cout << endl;
+							cout << "current best change : " << endl;
+							for (const auto &c : bestChange) {
+								cout << c << "->";
+							}
+							cout << endl;
 
 							// 找到论文最优解，直接退出
 							if (bestCost < aux.cost) { break; }
 
 						}	// 记录可扩展的叶子，不一定要topk
-						if ((level + 1) == depth && vid < (visitNum - 1)) {
+						if ((level + 1) == depth && vid >stVisit) {
 							leaf.first = totalCost;
 							leaf.second = lastChange;
 							for (const auto &v : trace._Get_container()) {	// 获取当前状态改变路径
 								leaf.second.push_back(v);
 							}
-							if (topkLeaves.size() < leafNum) {	// 叶子集合没满，直接加入
+							if (topkLeaves.size() < aux.leafNum) {	// 叶子集合没满，直接加入
 								topkLeaves.push_back(std::move(leaf));
 							}
 							else {
@@ -577,10 +578,22 @@ namespace szx {
 								}
 							}
 						}
-						++level; ++vid;	// 不剪枝，访问下一层节点
+						++level; --vid;	// 不剪枝，访问下一层节点
 					}
 					else {
-						++vid;	// 剪枝，直接访问同层下一个兄弟节点
+						if (vid == stVisit) {
+							curRoot = trace.top();
+							trace.pop(); --level;
+							if (curRoot < root) {
+								visits[curRoot / nodeNum][curRoot % nodeNum] = 1 - visits[curRoot / nodeNum][curRoot % nodeNum];
+								vid = curRoot - 1;
+							}
+							else { break; }
+						}
+						else {
+							--vid;	// 剪枝，直接访问同层下一个兄弟节点
+						}
+
 						cout << "------ Cut Cut Cut --------" << endl;
 					}
 				}
@@ -592,13 +605,13 @@ namespace szx {
 		}
 		// 没找到论文最优解，但是迭代结束，将 visits 改为当前找到的最优解，方便以后记录该解
 		if (bestCost >= aux.cost) {
-			loadVisits(visits, bestChange, -1);
+			loadVisits(visits, bestChange, endVisit);
 		}
 		// 记录找到的最优解
 		outVisits(visits, "best change : ");
 		callLKH(visits, true);	// 调用 LKH 得到最优解的路由
 		sln.totalCost = bestCost;
-		callModel(sln, visits, -1, true);	// 调用模型得到最优解的库存，并更新最终解
+		callModel(sln, visits, endVisit, true);	// 调用模型得到最优解的库存，并更新最终解
 		std::cout << "best result after iteration : " << bestCost << endl;
 	}
 
@@ -789,8 +802,6 @@ namespace szx {
 			}
 		};
 
-		mp.setMipSlnEvent(subTourHandler);
-
 		static const String TspCacheDir("TspCache/");
 		System::makeSureDirExist(TspCacheDir);
 		CachedTspSolver tspSolver(nodeNum, TspCacheDir + env.friendlyInstName() + ".csv");
@@ -861,6 +872,7 @@ namespace szx {
 		};
 
 		mp.setMipSlnEvent(nodeSetHandler);
+		//mp.setMipSlnEvent(subTourHandler);
 
 		// solve.
 		if (mp.optimize()) {
