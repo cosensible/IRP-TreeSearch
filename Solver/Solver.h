@@ -235,7 +235,7 @@ namespace szx {
 			Price initHoldingCost; // the holding cost for initial quantity before horizon begin.
 
 			int m = 1, leafNum = 1000;
-			Price cost = 4218.5;
+			Price cost = 4513;
 			List<List<ID>> tours;
 		} aux;
 
