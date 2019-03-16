@@ -300,6 +300,7 @@ namespace szx {
 			aux.initHoldingCost += i->holdingcost() * i->initquantity();
 		}
 	}
+
 	// vid 为当前改变的 <p, n> 访问状态，isBest 表示在记录最优解
 	Price Solver::callModel(Solution &sln, Arr2D<int> &visits, ID vid, bool isBest) {
 		ID nodeNum = input.nodes_size();
@@ -307,8 +308,7 @@ namespace szx {
 		ID periodNum = input.periodnum();
 
 		MpSolver::Configuration mpCfg(MpSolver::InternalSolver::GurobiMip, env.timeoutInSecond(), true, false);
-		MpSolver mp(mpCfg);
-		mp.setMaxThread(4);
+		MpSolver mp(mpCfg); mp.setMaxThread(4);
 
 		// delivery[p, v, n] is the quantity delivered to node n at period p by vehicle v.
 		Arr2D<Arr<Dvar>> delivery(input.periodnum(), vehicleNum, Arr<Dvar>(nodeNum));
@@ -353,7 +353,8 @@ namespace szx {
 
 					Quantity capacity = min(input.vehicles(v).capacity(), input.nodes(n).capacity());
 					double quantityCoef = (n >= input.depotnum()) ? 1 : -1;
-					mp.addConstraint(quantityCoef * delivery[p][v][n] <= capacity * visits[p][n]);
+					ostringstream name; name << "V" << p << n;
+					mp.addConstraint(quantityCoef * delivery[p][v][n] <= capacity * visits[p][n], name.str());
 				}
 				// quantity matching constraint.
 				mp.addConstraint(quantity == 0);
@@ -371,12 +372,12 @@ namespace szx {
 		mp.addObjective(holdingCost, MpSolver::OptimaOrientation::Minimize, 0, 0, 0, env.timeoutInSecond());
 
 		if (mp.optimize()) {
-			if (!isBest) { return mp.getObjectiveValue(); }
+			Price tourCost = callLKH(visits, isBest);
+			if (!isBest) { return mp.getObjectiveValue() + tourCost; }
 			// 不是记录最优解，直接返回，否则还要记录最优解
 			for (ID p = 0; p < input.periodnum(); ++p) {
-				auto &periodRoute(*sln.mutable_periodroutes(p));
 				for (ID v = 0; v < vehicleNum; ++v) {
-					auto &route(*periodRoute.mutable_vehicleroutes(v));
+					auto &route(*sln.mutable_periodroutes(p)->mutable_vehicleroutes(v));
 					route.clear_deliveries();
 					for (auto n = aux.tours[p].begin(); n != aux.tours[p].end(); ++n) {
 						auto &d(*route.add_deliveries());
@@ -385,7 +386,7 @@ namespace szx {
 					}
 				}
 			}
-			return mp.getObjectiveValue();
+			return mp.getObjectiveValue() + tourCost;
 		}
 		// 不可行，还原再加约束求解
 		else if (vid >= 0) {
@@ -400,9 +401,18 @@ namespace szx {
 				}
 			}
 			mp.addConstraint(inventory >= (pid + 1)*demand);
+			ostringstream name; name << "V" << pid << nid;
+			mp.removeConstraint(mp.getConstrByName(name.str()));
+			mp.updateModel();
+			Quantity capacity = min(input.vehicles(0).capacity(), input.nodes(nid).capacity());
+			double quantityCoef = (nid >= input.depotnum()) ? 1 : -1;
+			mp.addConstraint(quantityCoef * delivery[pid][0][nid] <= capacity, name.str());
+
 			if (mp.optimize()) {
-				visits[pid][nid] = 1 - visits[pid][nid];	// 翻转节点，继续搜索
-				return mp.getObjectiveValue();
+				Price totalCost = callLKH(visits, false) + mp.getObjectiveValue();
+				visits[pid][nid] = 1 - visits[pid][nid];	// 翻转，继续
+				cout << "INF : " << totalCost << endl;
+				return totalCost;
 			}
 		}
 		return -1;	// 还是不可行，剪枝
@@ -534,10 +544,9 @@ namespace szx {
 					ID pid = vid / nodeNum, nid = vid % nodeNum;
 					visits[pid][nid] = 1 - visits[pid][nid];
 					if (visits[pid][nid]) { visits[pid][0] = 1; }	// 客户变为1，仓库置1
-					Price invCost = callModel(sln, visits, vid);	// 求改变访问后的库存
-					if (invCost >= 0) {	// 该节点库存可行
+					Price totalCost = callModel(sln, visits, vid);
+					if (totalCost >= 0) {	// 该节点库存可行
 						trace.push(vid);
-						Price totalCost = callLKH(visits) + invCost;
 						std::cout << "cost after change : " << totalCost << ", best cost now : " << bestCost << endl;
 
 						if (totalCost < bestCost) {	// 记录全局最优值
@@ -599,7 +608,6 @@ namespace szx {
 		}
 		// 记录找到的最优解
 		outVisits(visits, "best change : ");
-		callLKH(visits, true);	// 调用 LKH 得到最优解的路由
 		sln.totalCost = bestCost;
 		callModel(sln, visits, -1, true);	// 调用模型得到最优解的库存，并更新最终解
 		std::cout << "best result after iteration : " << bestCost << endl;
@@ -611,6 +619,7 @@ namespace szx {
 		sln.init(input.periodnum(), input.vehicles_size(), Problem::MaxCost);
 		iteratedModel(sln);
 		treeSearch(sln, aux.m);
+		//MCTS(sln, 1);
 
 		Log(LogSwitch::Szx::Framework) << "worker " << workerId << " ends." << endl;
 		return true;
@@ -623,8 +632,7 @@ namespace szx {
 		const auto &nodes(*input.mutable_nodes());
 
 		MpSolver::Configuration mpCfg(MpSolver::InternalSolver::GurobiMip, env.timeoutInSecond(), true, false);
-		MpSolver mp(mpCfg);
-		mp.setMaxThread(4);
+		MpSolver mp(mpCfg); mp.setMaxThread(4);
 
 		// delivery[p, v, n] is the quantity delivered to node n at period p by vehicle v.
 		Arr2D<Arr<Dvar>> delivery(input.periodnum(), vehicleNum, Arr<Dvar>(nodeNum));
@@ -892,6 +900,49 @@ namespace szx {
 				}
 			}
 		}
+	}
+
+	void Solver::MCTS(Solution &sln, int iterTime) {
+		ID nodeNum = input.nodes_size();
+		ID periodNum = input.periodnum();
+		Arr2D<ID> visits(periodNum, nodeNum, 0);	// 记录初始解 visits
+		for (ID p = 0; p < periodNum; ++p) {
+			for (ID v = 0; v < input.vehicles_size(); ++v) {
+				auto &delivs(*sln.mutable_periodroutes(p)->mutable_vehicleroutes(v)->mutable_deliveries());
+				for (auto n = delivs.cbegin(); n != delivs.cend(); ++n) {
+					visits[p][n->node()] = 1;
+				}
+			}
+		}
+		outVisits(visits, "initial visits : ");
+		// Price：成本， List<ID>：为树搜索路径，最后一个元素为下一轮迭代起始节点
+		Price bestCost = sln.totalCost;
+		List<ID> bestChange;	// 记录最优解的变化路径
+		int visitNum = periodNum * nodeNum - 1;
+
+		TreeNode *root = new TreeNode(sln.totalCost, 0, 0.0, 1, NULL, NULL);
+		vector<TreeNode> leaves;
+		for (int vid = nodeNum + 1; vid <= visitNum; ++vid) {
+			ID pid = vid / nodeNum, nid = vid % nodeNum;
+			visits[pid][nid] = 1 - visits[pid][nid];
+			if (visits[pid][nid]) { visits[pid][0] = 1; }	// 客户变为1，仓库置1
+			Price invCost = callModel(sln, visits, vid);	// 求改变访问后的库存
+
+			if (invCost >= 0) {	// 该节点库存可行
+				Price totalCost = callLKH(visits) + invCost;
+				std::cout << "cost after change : " << totalCost << ", best cost now : " << bestCost << endl;
+				leaves.push_back({ totalCost,vid,totalCost,1,root,NULL });
+			}
+			//else {
+
+			//	leaves.push_back({ totalCost,vid,totalCost,1,root,NULL });
+			//}
+
+		}
+		for (int i = 0; i < iterTime; ++i) {
+
+		}
+
 	}
 #pragma endregion Solver
 

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <iostream>
 #include <functional>
+#include <string>
 
 #include "Common.h"
 #include "Utility.h"
@@ -327,6 +328,7 @@ public:
 
     // constraints.
     Constraint addConstraint(const LinearRange &r, const String &name = "") { return model.addConstr(r, name); }
+	Constraint getConstrByName(const std::string &name) { return model.getConstrByName(name); }
     void removeConstraint(Constraint constraint) { model.remove(constraint); }
     int getConstraintCount() const { return model.get(GRB_IntAttr_NumConstrs); }
 
@@ -400,6 +402,8 @@ public:
 
     void setSeed(int seed) { model.set(GRB_IntParam_Seed, (seed & (std::numeric_limits<int>::max)())); }
 
+	void updateModel() { model.update(); }
+
 protected:
     GRBEnv& getGlobalEnv() {
         thread_local static bool initialized = false;
@@ -435,7 +439,7 @@ protected:
     void setAltSolutionIndex(int solutionIndex) { model.set(GRB_IntParam_SolutionNumber, solutionIndex); }
 
     bool isConstant(const LinearExpr &expr) { return (expr.size() == 0); }
-    void updateModel() { model.update(); }
+
 
     ResultStatus solve() {
         try {

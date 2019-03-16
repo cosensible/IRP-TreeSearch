@@ -220,6 +220,7 @@ namespace szx {
 		void iteratedModel(Solution &sln);
 		void treeSearch(Solution &sln, int depth);
 		void loadVisits(Arr2D<int> &visits, const List<ID> &change, ID root);
+		void MCTS(Solution &sln, int iterTime);
 		Price callModel(Solution &sln, Arr2D<int> &visits, ID vid, bool isBest = false);
 		Price callLKH(const Arr2D<int> &visits, bool isBest = false);
 
@@ -235,9 +236,23 @@ namespace szx {
 			Price initHoldingCost; // the holding cost for initial quantity before horizon begin.
 
 			int m = 1, leafNum = 1000;
-			Price cost = 4513;
+			Price cost = 30201;// 4219;// 4406;// 4452;//4048,4513
 			List<List<ID>> tours;
 		} aux;
+
+		// cost,cid,value,visitNum,parent,children
+		struct TreeNode {
+			Price cost = Problem::MaxCost;	// 改变该节点的成本
+			ID cid = 0;						// 父亲的第几个儿子
+			Price value = Problem::MaxCost;	// 评估值
+			ID visitNum = 1;				// 访问该节点的次数
+			TreeNode *parent = NULL;		// 父节点指针
+			TreeNode *children = NULL;		// 当前访问过的儿子们链表
+
+			TreeNode() = default;
+			TreeNode(Price cost, ID id, Price val, ID vn, TreeNode *p, TreeNode *c) :
+				cost(cost), cid(id), value(val), visitNum(vn), parent(p), children(c) {}
+		};
 
 		Environment env;
 		Configuration cfg;
