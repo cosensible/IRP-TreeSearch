@@ -143,10 +143,10 @@ namespace szx {
 	void Simulator::debug() {
 		Task task;
 		task.instSet = "";
-		task.instId = "abs.v1h6c1n50.1";
+		task.instId = "abs.v1h3c2n50.1";
 		task.randSeed = "1500972793";
 		//task.randSeed = to_string(RandSeed::generate());
-		task.timeout = "30";
+		task.timeout = "60";
 		//task.maxIter = "1000000000";
 		task.jobNum = "1";
 		task.cfgPath = Env::DefaultCfgPath();

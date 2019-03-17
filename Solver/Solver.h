@@ -216,6 +216,7 @@ namespace szx {
 		void init();
 		bool optimize(Solution &sln, ID workerId = 0); // optimize by a single worker.
 
+		void initVisits();
 		void outVisits(const Arr2D<int> &visits, const std::string &msg);
 		void iteratedModel(Solution &sln);
 		void treeSearch(Solution &sln, int depth);
@@ -236,8 +237,10 @@ namespace szx {
 			Price initHoldingCost; // the holding cost for initial quantity before horizon begin.
 
 			int m = 1, leafNum = 1000;
-			Price cost = 30201;// 4219;// 4406;// 4452;//4048,4513
+			Price cost = 4048; // 4452;// 30201;// 4513; //30201;// 4219;// 4406;// 4452;//4048,4513
 			List<List<ID>> tours;
+			Arr2D<ID> visits;	// ·ÃÎÊ×´Ì¬
+
 		} aux;
 
 		// cost,cid,value,visitNum,parent,children
