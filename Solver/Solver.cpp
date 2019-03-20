@@ -286,8 +286,9 @@ namespace szx {
 		aux.routingCost.init(input.nodes_size(), input.nodes_size());
 		aux.routingCost.reset(Arr2D<Price>::ResetOption::AllBits0);
 		aux.tours.resize(input.periodnum());
-		aux.visits.init(input.periodnum(), input.nodes_size());
-		aux.visits.reset(Arr2D<ID>::ResetOption::AllBits0);
+		//aux.visits.init(input.periodnum(), input.nodes_size());
+		//aux.visits.reset(Arr2D<ID>::ResetOption::AllBits0);
+
 		ID n = 0;
 		for (auto i = input.nodes().begin(); i != input.nodes().end(); ++i, ++n) {
 			ID m = 0;
@@ -301,10 +302,23 @@ namespace szx {
 		for (auto i = input.nodes().begin(); i != input.nodes().end(); ++i) {
 			aux.initHoldingCost += i->holdingcost() * i->initquantity();
 		}
+
+		//aux.dm.init(input.nodes_size(), 3);
+
+		//for (ID i = 0; i < input.nodes_size(); ++i) {
+		//	vector<std::pair<Price, ID>> dv;
+		//	for (ID j = 0; j < input.nodes_size(); ++j) {
+		//		dv.push_back({ aux.routingCost[i][j],j });
+		//	}
+		//	sort(dv.begin(), dv.end());
+		//	for (int k = 0; k < 3; ++k) {
+		//		aux.dm[i][k] = dv[k];
+		//	}
+		//}
 	}
 
 	// vid 为当前改变的 <p, n> 访问状态，isBest 表示在记录最优解
-	Price Solver::callModel(Solution &sln, Arr2D<int> &visits, ID vid, bool isBest) {
+	Price Solver::callModel(Solution &sln, Arr2D<int> &visits,  Price &totalCost, ID vid, bool isBest) {
 		ID nodeNum = input.nodes_size();
 		ID vehicleNum = input.vehicles_size();
 		ID periodNum = input.periodnum();
@@ -374,8 +388,8 @@ namespace szx {
 		mp.addObjective(holdingCost, MpSolver::OptimaOrientation::Minimize, 0, 0, 0, env.timeoutInSecond());
 
 		if (mp.optimize()) {
-			Price tourCost = callLKH(visits, isBest);
-			if (!isBest) { return mp.getObjectiveValue() + tourCost; }
+			totalCost = callLKH(visits, isBest) + mp.getObjectiveValue();
+			if (!isBest) { return  false; }
 			// 不是记录最优解，直接返回，否则还要记录最优解
 			for (ID p = 0; p < input.periodnum(); ++p) {
 				for (ID v = 0; v < vehicleNum; ++v) {
@@ -388,7 +402,7 @@ namespace szx {
 					}
 				}
 			}
-			return mp.getObjectiveValue() + tourCost;
+			return false;
 		}
 		// 不可行，还原再加约束求解
 		else if (vid >= 0) {
@@ -411,13 +425,14 @@ namespace szx {
 			mp.addConstraint(quantityCoef * delivery[pid][0][nid] <= capacity, name.str());
 
 			if (mp.optimize()) {
-				Price totalCost = callLKH(visits, false) + mp.getObjectiveValue();
+				totalCost = callLKH(visits, false) + mp.getObjectiveValue();
 				visits[pid][nid] = 1 - visits[pid][nid];	// 翻转，继续
 				cout << "INF : " << totalCost << endl;
-				return totalCost;
+				return true;
 			}
 		}
-		return -1;	// 还是不可行，剪枝
+		totalCost = -1;
+		return true;	// 还是不可行，剪枝
 	}
 
 	Price Solver::callLKH(const Arr2D<ID> &visits, bool isBest) {
@@ -488,6 +503,11 @@ namespace szx {
 	}
 
 	void Solver::treeSearch(Solution &sln, int depth) {
+		if (sln.totalCost < aux.cost) { return; }
+
+		timer = Timer(180s);
+		Price bestCost = sln.totalCost, totalCost;
+		List<ID> bestChange;	// 记录最优解的变化路径
 		ID nodeNum = input.nodes_size(), periodNum = input.periodnum();
 		Arr2D<ID> visits(periodNum, nodeNum, 0);	// 记录初始解 visits
 		for (ID p = 0; p < periodNum; ++p) {
@@ -498,20 +518,13 @@ namespace szx {
 				}
 			}
 		}
-
-		//for (ID p = 0; p < periodNum; ++p) {
-		//	for (ID n = 0; n < nodeNum; ++n) {
-		//		visits[p][n] = aux.visits[p][n];
-		//	}
-		//}
 		outVisits(visits, "initial visits : ");
 
 		// Price：成本， List<ID>：为树搜索路径，最后一个元素为下一轮迭代起始节点
-		Price bestCost = sln.totalCost;
-		List<ID> bestChange;	// 记录最优解的变化路径
 		int visitNum = periodNum * nodeNum - 1;
 		List<pair<Price, List<ID>>> topkLeaves{ { 0,{ -1 } } };
 		while (!topkLeaves.empty()) {
+
 			pair<Price, List<ID>> leaf(std::move(topkLeaves.back()));
 			topkLeaves.pop_back();
 			int root = leaf.second.back();	// 下一轮迭代起点
@@ -549,12 +562,13 @@ namespace szx {
 					ID pid = vid / nodeNum, nid = vid % nodeNum;
 					visits[pid][nid] = 1 - visits[pid][nid];
 					if (visits[pid][nid]) { visits[pid][0] = 1; }	// 客户变为1，仓库置1
-					Price totalCost = callModel(sln, visits, vid);
+
+					bool isINF = callModel(sln, visits, totalCost, vid);
 					if (totalCost >= 0) {	// 该节点库存可行
 						trace.push(vid);
 						std::cout << "cost after change : " << totalCost << ", best cost now : " << bestCost << endl;
 
-						if (totalCost < bestCost) {	// 记录全局最优值
+						if (!isINF && totalCost < bestCost) {	// 记录全局最优值
 							bestCost = totalCost; bestChange = lastChange;
 							for (const auto &vid : trace._Get_container()) {	// 记录最优状态改变路径
 								bestChange.push_back(vid);
@@ -588,7 +602,7 @@ namespace szx {
 						++level; ++vid;	// 不剪枝，访问下一层节点
 					}
 					else {
-						cout << "------ Cut Cut Cut --------" << endl;
+						//cout << "------ Cut Cut Cut --------" << endl;
 						if (vid == visitNum) {
 							curRoot = trace.top();
 							trace.pop(); --level;
@@ -606,26 +620,31 @@ namespace szx {
 			if (bestCost < aux.cost) { break; }
 			// 否则，还原 visits 状态，并继续下一轮迭代
 			loadVisits(visits, lastChange, root);
+			if (timer.isTimeOut()) { break; }
 		}
+
 		// 没找到论文最优解，但是迭代结束，将 visits 改为当前找到的最优解，方便以后记录该解
+		outVisits(visits, "verify : ");
 		if (bestCost >= aux.cost) {
+			for (const auto &c : bestChange) {
+				cout << c << " ";
+			}
+			cout << endl;
 			loadVisits(visits, bestChange, -1);
 		}
+
 		// 记录找到的最优解
 		outVisits(visits, "best change : ");
-		sln.totalCost = bestCost;
-		callModel(sln, visits, -1, true);	// 调用模型得到最优解的库存，并更新最终解
-		std::cout << "best result after iteration : " << bestCost << endl;
+		callModel(sln, visits, sln.totalCost, -1, true);	// 调用模型得到最优解的库存，并更新最终解
+		//std::cout << "best result after iteration : " << bestCost << endl;
 	}
 
 	bool Solver::optimize(Solution &sln, ID workerId) {
 		Log(LogSwitch::Szx::Framework) << "worker " << workerId << " starts." << endl;
 
 		sln.init(input.periodnum(), input.vehicles_size(), Problem::MaxCost);
-		//iteratedModel(sln);
-		initVisits();
+		iteratedModel(sln);
 		treeSearch(sln, aux.m);
-		//MCTS(sln, 1);
 
 		Log(LogSwitch::Szx::Framework) << "worker " << workerId << " ends." << endl;
 		return true;
@@ -734,7 +753,7 @@ namespace szx {
 				holdingCost += (node.holdingcost() * quantityLevel.at(n, p));
 			}
 		}
-		Expr routingCost, dist2depot;
+		Expr routingCost;
 		for (ID p = 0; p < input.periodnum(); ++p) {
 			for (ID v = 0; v < vehicleNum; ++v) {
 				Arr2D<Dvar> &xpv(x.at(p, v));
@@ -746,14 +765,34 @@ namespace szx {
 				}
 			}
 		}
-		for (ID p = 0; p < input.periodnum(); ++p) {
-			for (ID v = 0; v < vehicleNum; ++v) {
-				for (ID n = input.depotnum(); n < nodeNum; ++n) {
-					dist2depot += aux.routingCost.at(0, n)*degrees[p][v][n];
-				}
-			}
-		}
-		obj = holdingCost + routingCost + dist2depot;
+
+		//Expr dist2depot;
+		//for (ID p = 0; p < input.periodnum(); ++p) {
+		//	for (ID v = 0; v < vehicleNum; ++v) {
+		//		for (ID n = input.depotnum(); n < nodeNum; ++n) {
+		//			dist2depot += aux.routingCost.at(0, n)*degrees[p][v][n];
+		//		}
+		//	}
+		//}
+
+		//Expr tspCost;
+		//for (ID p = 0; p < input.periodnum(); ++p) {
+		//	for (ID v = 0; v < vehicleNum; ++v) {
+		//		Expr  base, adjust;
+		//		for (ID n = 0; n < nodeNum; ++n) {
+		//			base = base + aux.dm[n][1].first + aux.dm[n][2].first;
+		//			ID m1 = aux.dm[n][1].second, m2 = aux.dm[n][2].second;
+		//			if (n != aux.dm[m1][1].second && n != aux.dm[m1][2].second) {
+		//				adjust = adjust + min(aux.dm[n][3].first - aux.dm[n][1].first, aux.dm[n][1].first - aux.dm[m1][2].first);
+		//			}
+		//			if (n != aux.dm[m2][1].second && n != aux.dm[m2][2].second) {
+		//				adjust = adjust + min(aux.dm[n][3].first - aux.dm[n][2].first, aux.dm[n][2].first - aux.dm[m2][2].first);
+		//			}
+		//		}
+		//	}
+		//}
+
+		obj = holdingCost + routingCost;// +dist2depot;
 		mp.addObjective(obj, MpSolver::OptimaOrientation::Minimize, 0, 0, 0, env.timeoutInSecond());
 
 		// add callbacks.
@@ -824,7 +863,7 @@ namespace szx {
 
 			// OPTIMIZE[szx][0]: check the bound and only apply this to the optimal sln.
 
-			cout << "holding cost = " << e.getValue(holdingCost) << ", routing cost = " << e.getValue(routingCost) << ", dist2depot = " << e.getValue(dist2depot) << endl;
+			// cout << "holding cost = " << e.getValue(holdingCost) << ", routing cost = " << e.getValue(routingCost) << ", dist2depot = " << e.getValue(dist2depot) << endl;
 
 			lkh::CoordList2D coords; // OPTIMIZE[szx][3]: use adjacency matrix to avoid re-calculation and different rounding?
 			coords.reserve(nodeNum);
@@ -879,21 +918,37 @@ namespace szx {
 
 			curSln.totalCost += e.getValue(holdingCost);
 			if (curSln.totalCost < sln.totalCost) {
-				Log(LogSwitch::Szx::Model) << "opt=" << curSln.totalCost << endl;
+				Log(LogSwitch::Szx::Model) << "By nodeSetHandler, opt=" << curSln.totalCost << endl;
 				std::swap(curSln, sln);
 			}
 		};
 
 		//mp.setMipSlnEvent(subTourHandler);
-		mp.setMipSlnEvent(nodeSetHandler);
+		//mp.setMipSlnEvent(nodeSetHandler);
+
+		int iter = 1, mod = 10;
+		auto callHandlers = [&](MpSolver::MpEvent &e) {
+			if (iter % mod) {
+				subTourHandler(e);
+			}
+			else {
+				nodeSetHandler(e);
+			}
+			++iter;
+		};
+		mp.setMipSlnEvent(callHandlers);
+
+		//mp.setMipSlnEvent([&](MpSolver::MpEvent &e) {
+		//	nodeSetHandler(e);
+		//	subTourHandler(e);
+		//});
 
 		// solve.
 		if (mp.optimize()) {
 			// retrive solution.
-			sln.totalCost = obj.getValue();
-
+			curSln.totalCost = obj.getValue();
 			for (ID p = 0; p < input.periodnum(); ++p) {
-				auto &periodRoute(*sln.mutable_periodroutes(p));
+				auto &periodRoute(*curSln.mutable_periodroutes(p));
 				for (ID v = 0; v < vehicleNum; ++v) {
 					Arr2D<Dvar> &xpv(x.at(p, v));
 					auto &route(*periodRoute.mutable_vehicleroutes(v));
@@ -914,68 +969,41 @@ namespace szx {
 					}
 				}
 			}
+			if (curSln.totalCost < sln.totalCost) {
+				Log(LogSwitch::Szx::Model) << "By subtourHandler, opt=" << curSln.totalCost << endl;
+				std::swap(curSln, sln);
+
+				//ID nodeNum = input.nodes_size(), periodNum = input.periodnum();
+				//Arr2D<ID> visits(periodNum, nodeNum, 0);	// 记录初始解 visits
+				//for (ID p = 0; p < periodNum; ++p) {
+				//	for (ID v = 0; v < input.vehicles_size(); ++v) {
+				//		auto &delivs(*sln.mutable_periodroutes(p)->mutable_vehicleroutes(v)->mutable_deliveries());
+				//		for (auto n = delivs.cbegin(); n != delivs.cend(); ++n) {
+				//			visits[p][n->node()] = 1;
+				//		}
+				//	}
+				//}
+				//outVisits(visits, "initial visits in optimal: ");
+			}
 		}
 	}
 
-	void Solver::initVisits() {
-		ID nodeNum = input.nodes_size(), periodNum = input.periodnum();
-		const auto &nodes(*input.mutable_nodes());
-
-		for (ID n = 1; n < nodeNum; ++n) {
-			Quantity quantity = nodes[n].initquantity();
-			for (ID p = 0; p < periodNum; ++p) {
-				Quantity inventory = quantity - nodes[n].demands(0) * (p + 1);
-				if (inventory < 0) {
-					aux.visits[p][n] = aux.visits[p][0] = 1;
-					quantity = nodes[n].capacity();
-				}
-			}
-		}
-		// ------- 合并相邻两个周期的车辆路由 ---------
-	}
-
-	void Solver::MCTS(Solution &sln, int iterTime) {
-		ID nodeNum = input.nodes_size();
-		ID periodNum = input.periodnum();
-		Arr2D<ID> visits(periodNum, nodeNum, 0);	// 记录初始解 visits
-		for (ID p = 0; p < periodNum; ++p) {
-			for (ID v = 0; v < input.vehicles_size(); ++v) {
-				auto &delivs(*sln.mutable_periodroutes(p)->mutable_vehicleroutes(v)->mutable_deliveries());
-				for (auto n = delivs.cbegin(); n != delivs.cend(); ++n) {
-					visits[p][n->node()] = 1;
-				}
-			}
-		}
-		outVisits(visits, "initial visits : ");
-		// Price：成本， List<ID>：为树搜索路径，最后一个元素为下一轮迭代起始节点
-		Price bestCost = sln.totalCost;
-		List<ID> bestChange;	// 记录最优解的变化路径
-		int visitNum = periodNum * nodeNum - 1;
-
-		TreeNode *root = new TreeNode(sln.totalCost, 0, 0.0, 1, NULL, NULL);
-		vector<TreeNode> leaves;
-		for (int vid = nodeNum + 1; vid <= visitNum; ++vid) {
-			ID pid = vid / nodeNum, nid = vid % nodeNum;
-			visits[pid][nid] = 1 - visits[pid][nid];
-			if (visits[pid][nid]) { visits[pid][0] = 1; }	// 客户变为1，仓库置1
-			Price invCost = callModel(sln, visits, vid);	// 求改变访问后的库存
-
-			if (invCost >= 0) {	// 该节点库存可行
-				Price totalCost = callLKH(visits) + invCost;
-				std::cout << "cost after change : " << totalCost << ", best cost now : " << bestCost << endl;
-				leaves.push_back({ totalCost,vid,totalCost,1,root,NULL });
-			}
-			//else {
-
-			//	leaves.push_back({ totalCost,vid,totalCost,1,root,NULL });
-			//}
-
-		}
-		for (int i = 0; i < iterTime; ++i) {
-
-		}
-
-	}
+	//void Solver::initVisits() {
+	//	ID nodeNum = input.nodes_size(), periodNum = input.periodnum();
+	//	const auto &nodes(*input.mutable_nodes());
+	//
+	//	for (ID n = 1; n < nodeNum; ++n) {
+	//		Quantity quantity = nodes[n].initquantity();
+	//		for (ID p = 0; p < periodNum; ++p) {
+	//			Quantity inventory = quantity - nodes[n].demands(0) * (p + 1);
+	//			if (inventory < 0) {
+	//				aux.visits[p][n] = aux.visits[p][0] = 1;
+	//				quantity = nodes[n].capacity();
+	//			}
+	//		}
+	//	}
+	//	// ------- 合并相邻两个周期的车辆路由 ---------
+	//}
 #pragma endregion Solver
 
 }
