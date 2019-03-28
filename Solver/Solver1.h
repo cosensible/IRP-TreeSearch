@@ -15,11 +15,13 @@
 #include <functional>
 #include <sstream>
 #include <thread>
+#include <string>
 
 #include "Common.h"
 #include "Utility.h"
 #include "LogSwitch.h"
 #include "Problem.h"
+#include "CachedTspSolver.h"
 #include "MpSolver.h"
 
 namespace szx {
@@ -30,8 +32,7 @@ namespace szx {
 		using Dvar = MpSolver::DecisionVar;
 		using Expr = MpSolver::LinearExpr;
 		static constexpr double Precision = 1000;
-		static constexpr unsigned BitSize = 10e8;
-		static constexpr double gamma1 = 2.0, gamma2 = 2.4, gamma3 = 2.8;
+
 		// commmand line interface.
 		struct Cli {
 			static constexpr int MaxArgLen = 256;
@@ -180,6 +181,7 @@ namespace szx {
 
 		struct Solution : public Problem::Output { // delivery plan.
 			Solution(Solver *pSolver = nullptr) : solver(pSolver) {}
+
 			void init(ID periodNum, ID vehicleNum, Price initCost = 0) {
 				totalCost = initCost;
 				for (ID p = 0; p < periodNum; ++p) {
@@ -214,24 +216,13 @@ namespace szx {
 		void init();
 		bool optimize(Solution &sln, ID workerId = 0); // optimize by a single worker.
 
+		void outVisits(const Arr2D<int> &visits, const std::string &msg);
 		void iteratedModel(Solution &sln);
-		void sln2Visits(Solution &sln);
-		Price callLKH(const Arr2D<ID> &visits, bool isBest = false);
-		Price callModel(Solution &sln, Arr2D<int> &visits, bool isBest = false);
-		int buildAddNeigh(Solution &sln, Arr2D<ID> &visits);
-		int buildDelNeigh(Solution &sln, Arr2D<ID> &visits);
-		int buildSwapNeigh(Solution &sln, Arr2D<ID> &visits);
-		int buildTabuNeigh(Solution &sln, Arr2D<ID> &visits);
-		void swapTabuSearch(Solution &sln, Arr2D<ID> &visits);
-		bool localSearch(Solution &sln, Arr2D<ID> &visits);
-		void finalSearch(Solution &sln);
-		void getBestSln(Solution &sln);
-
-		ID hash1(const Arr2D<ID> &visits);
-		ID hash2(const Arr2D<ID> &visits);
-		ID hash3(const Arr2D<ID> &visits);
-		bool isTabu(unsigned hv1, unsigned hv2, unsigned hv3, ID to1, ID to0);
-		void execTabu(ID to1, ID to0);
+		void treeSearch(Solution &sln, int depth);
+		void treeSearch1(Solution &sln, int depth);
+		void loadVisits(Arr2D<int> &visits, const List<ID> &change, ID root);
+		Price callModel(Solution &sln, Arr2D<int> &visits, Price &totalCost, ID vid, bool isBest = false);
+		Price callLKH(const Arr2D<int> &visits, bool isBest = false);
 
 #pragma endregion Method
 
@@ -239,19 +230,14 @@ namespace szx {
 	public:
 		Problem::Input input;
 		Problem::Output output;
-		ID periodNum, nodeNum, alpha = 20;
-		List<bool> H1, H2, H3;
-		unsigned hashValue1, hashValue2, hashValue3;
 
 		struct { // auxiliary data for solver.
 			Arr2D<Price> routingCost; // routingCost[i, j] is the routing cost from node i to j.
 			Price initHoldingCost; // the holding cost for initial quantity before horizon begin.
-			Price bestCost;
 
-			Arr2D<ID> visits;
-			Arr<List<ID>> tours;
-			List<std::pair<Price, ID>> delNeigh, addNeigh;
-			List<std::tuple<Price, ID, ID>> swapNeigh, tabuNeigh;
+			int m = 1, leafNum = 1000;
+			Price refObj;
+			List<List<ID>> tours;
 		} aux;
 
 		Environment env;
