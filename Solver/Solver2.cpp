@@ -377,22 +377,14 @@ namespace szx {
 				if (visits[p][n]) {
 					visits[p][n] = 0;
 					Price totalCost = callModel(sln, visits);
-					if (totalCost >= 0 && Math::weakLess( totalCost , aux.bestCost)) {
-						//aux.delNeigh.push_back({ totalCost,p*nodeNum + n });
-
-						if (0 == aux.delNeigh.size() || Math::weakEqual(totalCost, aux.delNeigh[0].first)) {
-							aux.delNeigh.push_back({ totalCost,p*nodeNum + n });
-						}
-						else if (Math::strongLess(totalCost, aux.delNeigh[0].first)) {
-							aux.delNeigh.clear();
-							aux.delNeigh.push_back({ totalCost,p*nodeNum + n });
-						}
+					if (totalCost >= 0 && totalCost <= aux.bestCost) {
+						aux.delNeigh.push_back({ totalCost,p*nodeNum + n });
 					}
 					visits[p][n] = 1;
 				}
 			}
 		}
-		//sort(aux.delNeigh.begin(), aux.delNeigh.end());	// 选最优的邻居解
+		sort(aux.delNeigh.begin(), aux.delNeigh.end());	// 选最优的邻居解
 		return aux.delNeigh.size();
 	}
 
@@ -449,16 +441,8 @@ namespace szx {
 					visits[p1][n] = 0;
 					if (!isTabu(hashValue1,hashValue2,hashValue3, p0*nodeNum + n, p1*nodeNum + n)) {
 						Price totalCost = callModel(sln, visits);
-						if (totalCost >= 0 && Math::weakLess(totalCost, aux.bestCost)) {
-							//aux.swapNeigh.push_back({ totalCost,p0*nodeNum + n,p1*nodeNum + n });
-
-							if (0 == aux.swapNeigh.size() || Math::weakEqual(totalCost, std::get<0>(aux.swapNeigh[0]))) {
-								aux.swapNeigh.push_back({ totalCost,p0*nodeNum + n,p1*nodeNum + n });
-							}
-							else if (Math::strongLess(totalCost, std::get<0>(aux.swapNeigh[0]))) {
-								aux.swapNeigh.clear();
-								aux.swapNeigh.push_back({ totalCost,p0*nodeNum + n,p1*nodeNum + n });
-							}
+						if (totalCost >= 0 && totalCost <= aux.bestCost) {
+							aux.swapNeigh.push_back({ totalCost,p0*nodeNum + n,p1*nodeNum + n });
 						}
 					}
 					visits[p1][n] = 1;
@@ -466,7 +450,7 @@ namespace szx {
 				visits[p0][n] = 0;
 			}
 		}
-		//sort(aux.swapNeigh.begin(), aux.swapNeigh.end());	// 选最优的邻居解
+		sort(aux.swapNeigh.begin(), aux.swapNeigh.end());	// 选最优的邻居解
 		return aux.swapNeigh.size();
 	}
 
@@ -513,10 +497,10 @@ namespace szx {
 					if (!isTabu(hashValue1, hashValue2, hashValue3, p0*nodeNum + n, p1*nodeNum + n)) {
 						Price totalCost = callModel(sln, visits);
 						if (totalCost >= 0) {	// 模型有解
-							if (0 == aux.tabuNeigh.size() || Math::weakEqual(totalCost , std::get<0>(aux.tabuNeigh[0]))) {
+							if (0 == aux.tabuNeigh.size() || totalCost == std::get<0>(aux.tabuNeigh[0])) {
 								aux.tabuNeigh.push_back({ totalCost,p0*nodeNum + n,p1*nodeNum + n });
 							}
-							else if (Math::strongLess( totalCost , std::get<0>(aux.tabuNeigh[0]))) {
+							else if (totalCost < std::get<0>(aux.tabuNeigh[0])) {
 								aux.tabuNeigh.clear();
 								aux.tabuNeigh.push_back({ totalCost,p0*nodeNum + n,p1*nodeNum + n });
 							}
@@ -538,7 +522,6 @@ namespace szx {
 		hashValue1 = hash1(tabuVisits), hashValue2 = hash2(tabuVisits), hashValue3 = hash3(tabuVisits);
 		H1[hashValue1] = H2[hashValue2] = H3[hashValue3] = 1;	// 禁忌初始解
 		while ((step++) < alpha && (tabuNeighSize = buildTabuNeigh(sln, tabuVisits))) {
-			Log(LogSwitch::Szx::STS) << "tabuNeighSize = " << tabuNeighSize << endl;
 			std::tie(cost, to1, to0) = aux.tabuNeigh[rand.pick(tabuNeighSize)];
 			tabuVisits[to1 / nodeNum][to1 % nodeNum] = 1;
 			tabuVisits[to0 / nodeNum][to0 % nodeNum] = 0;
@@ -581,16 +564,16 @@ namespace szx {
 		do {
 			while (delNeighSize = buildDelNeigh(sln, visits)) {
 				Log(LogSwitch::Szx::LS) << "delNeighSize = " << delNeighSize << endl;
-				ID to0; std::tie(aux.bestCost, to0) = aux.delNeigh[rand.pick(delNeighSize)]; // 在邻域随机选择
-				//ID to0; std::tie(aux.bestCost, to0) = aux.delNeigh[0];	// 选择最佳邻居解
+				//ID to0; std::tie(aux.bestCost, to0) = aux.delNeigh[rand.pick(delNeighSize)]; // 在邻域随机选择
+				ID to0; std::tie(aux.bestCost, to0) = aux.delNeigh[0];	// 选择最佳邻居解
 				visits[to0 / nodeNum][to0 % nodeNum] = 0;
 				isImproved = true;
 				Log(LogSwitch::Szx::LS) << "By del, opt=" << aux.bestCost << endl;
 			}
 			while (swapNeighSize = buildSwapNeigh(sln, visits)) {
 				Log(LogSwitch::Szx::LS) << "swapNeighSize = " << swapNeighSize << endl;
-				ID to1, to0; std::tie(aux.bestCost, to1, to0) = aux.swapNeigh[rand.pick(swapNeighSize)]; // 在邻域随机选择
-				//ID to1, to0; std::tie(aux.bestCost, to1, to0) = aux.swapNeigh[0];	// 选择最佳邻居解
+				//ID to1, to0; std::tie(aux.bestCost, to1, to0) = aux.swapNeigh[rand.pick(swapNeighSize)]; // 在邻域随机选择
+				ID to1, to0; std::tie(aux.bestCost, to1, to0) = aux.swapNeigh[0];	// 选择最佳邻居解
 				visits[to1 / nodeNum][to1 % nodeNum] = 1;
 				visits[to0 / nodeNum][to0 % nodeNum] = 0;
 				execTabu(to1, to0);	// 禁忌该解
